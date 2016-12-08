@@ -102,34 +102,30 @@ func (c *Client) CreateUpdate(profileIds []string, opts UpdateOptions) ([]Update
 
 func (c *Client) get(resource string) ([]byte, error) {
 	urlEndpoint := c.Url + "/" + resource + ".json?access_token=" + c.AccessToken
-	request, err := http.Get(urlEndpoint)
+	resp, err := http.Get(urlEndpoint)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
-	defer request.Body.Close()
-	requestBodyByte, err := ioutil.ReadAll(request.Body)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("buffer API said: %s", resp.Status)
 	}
-
-	return requestBodyByte, nil
+	return ioutil.ReadAll(resp.Body)
 }
 
 func (c *Client) post(resource string, params url.Values) ([]byte, error) {
 	urlEndpoint := c.Url + "/" + resource + ".json?access_token=" + c.AccessToken
-	request, err := http.PostForm(urlEndpoint, params)
+	resp, err := http.PostForm(urlEndpoint, params)
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
-	defer request.Body.Close()
-	requestBodyByte, err := ioutil.ReadAll(request.Body)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("buffer API said: %s", resp.Status)
 	}
-
-	return requestBodyByte, nil
+	return ioutil.ReadAll(resp.Body)
 }
 
 func NewClient(accessToken string) *Client {
