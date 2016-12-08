@@ -363,8 +363,10 @@ func main() {
 	}
 	var profileIDs []string
 	for _, p := range profiles {
-		profileIDs = append(profileIDs, p.Id)
-		log.Printf("using %s...", p.Service)
+		if p.Service == "facebook" {
+			profileIDs = append(profileIDs, p.Id)
+			log.Printf("using %s...", p.Service)
+		}
 	}
 
 	app := app{
