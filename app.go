@@ -3,24 +3,17 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
-
-	"github.com/SlyMarbo/rss"
 	"github.com/alexflint/bufferlinks/buffer"
 	arg "github.com/alexflint/go-arg"
 	_ "github.com/mattn/go-sqlite3"
@@ -28,154 +21,6 @@ import (
 )
 
 const accessToken = "1/9a1c6e4de8e136b3c04c941233350e88"
-
-type visitor interface {
-	visit(n *html.Node) visitor
-}
-
-func walkHTML(n *html.Node, v visitor) {
-	vv := v.visit(n)
-	if vv == nil {
-		return
-	}
-	for child := n.FirstChild; child != nil; child = child.NextSibling {
-		walkHTML(child, vv)
-	}
-	v.visit(nil)
-}
-
-func attr(n *html.Node, name string) string {
-	for _, at := range n.Attr {
-		if strings.ToLower(at.Key) == name {
-			return at.Val
-		}
-	}
-	return ""
-}
-
-type flattenVisitor struct {
-	out bytes.Buffer
-}
-
-func (v *flattenVisitor) visit(n *html.Node) visitor {
-	if n == nil {
-		return nil
-	}
-	if n.Type == html.TextNode {
-		v.out.Write([]byte(n.Data + " "))
-	}
-	return v
-}
-
-func flatten(n *html.Node) string {
-	var v flattenVisitor
-	walkHTML(n, &v)
-	return v.out.String()
-}
-
-type article struct {
-	ID    int64
-	Title string
-	URL   string
-	Links []*link
-	Feed  string
-	Date  time.Time
-}
-
-type link struct {
-	ID      int64
-	URL     string
-	Domain  string
-	Context string
-
-	Queued   bool      // populated from DB
-	QueuedAt time.Time // populated from DB
-}
-
-type byDate []*article
-
-func (xs byDate) Len() int           { return len(xs) }
-func (xs byDate) Swap(i, j int)      { xs[i], xs[j] = xs[j], xs[i] }
-func (xs byDate) Less(i, j int) bool { return xs[i].Date.Before(xs[j].Date) }
-
-type linkVisitor struct {
-	parent *html.Node
-	links  []*link
-}
-
-func (v *linkVisitor) visit(n *html.Node) visitor {
-	if n == nil {
-		return nil
-	}
-	if n.Type == html.ElementNode && n.DataAtom == atom.A {
-		if href := attr(n, "href"); href != "" {
-			if url, err := url.Parse(href); err == nil {
-				v.links = append(v.links, &link{
-					URL:     href,
-					Domain:  url.Host,
-					Context: flatten(n),
-				})
-			}
-		}
-	}
-	return v
-}
-
-func findLinks(s string) ([]*link, error) {
-	root, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		return nil, err
-	}
-
-	var v linkVisitor
-	walkHTML(root, &v)
-	return v.links, nil
-}
-
-func fetch(urlstr string) ([]*article, error) {
-	feed, err := rss.Fetch(urlstr)
-	if err != nil {
-		return nil, err
-	}
-
-	feedurl, err := url.Parse(feed.Link)
-	if err != nil {
-		return nil, err
-	}
-
-	var all []*article
-	for _, item := range feed.Items {
-		if !strings.Contains(strings.ToLower(item.Title), "link") {
-			continue
-		}
-
-		links, err := findLinks(item.Content)
-		if err != nil {
-			log.Printf("%s: %v\n", item.Title, err)
-		}
-
-		var filtered []*link
-		for _, link := range links {
-			linkurl, err := url.Parse(link.URL)
-			if err == nil && linkurl.Host == feedurl.Host {
-				//log.Println("ignoring", link.URL)
-				continue
-			}
-			filtered = append(filtered, link)
-		}
-
-		if len(links) > 0 {
-			all = append(all, &article{
-				Title: item.Title,
-				URL:   item.Link,
-				Links: filtered,
-				Feed:  feed.Title,
-				Date:  item.Date,
-			})
-		}
-	}
-	return all, nil
-}
 
 func httpError(w http.ResponseWriter, format interface{}, parts ...interface{}) {
 	http.Error(w, fmt.Sprintf(fmt.Sprintf("%v", format), parts...), http.StatusInternalServerError)
@@ -216,12 +61,43 @@ func (a *app) loadTemplates() {
 }
 
 func (a *app) refreshFeeds() error {
-	urlstr := "http://feeds.feedburner.com/marginalrevolution?fmt=xml"
-	articles, err := fetch(urlstr)
+	var articles []*article
+
+	// Marginal Revolution
+	log.Println("polling marginal revolution...")
+	mr, err := fetch("http://feeds.feedburner.com/marginalrevolution?fmt=xml")
 	if err != nil {
 		return err
 	}
-	log.Printf("parsed %d articles from %s", len(articles), urlstr)
+	for _, a := range mr {
+		if strings.Contains(strings.ToLower(a.Title), "link") {
+			articles = append(articles, a)
+		}
+	}
+
+	// Slate Star Codex
+	log.Println("polling slate star codex...")
+	ssc, err := fetch("http://slatestarcodex.com/feed/")
+	if err != nil {
+		return err
+	}
+	for _, a := range ssc {
+		if strings.Contains(strings.ToLower(a.Title), "link") {
+			articles = append(articles, a)
+		}
+	}
+
+	// foreXiv
+	log.Println("polling forexiv...")
+	forexiv, err := fetch("http://blog.jessriedel.com/feed/")
+	if err != nil {
+		return err
+	}
+	for _, a := range forexiv {
+		if strings.Contains(strings.ToLower(a.Title), "link") {
+			articles = append(articles, a)
+		}
+	}
 
 	a.lastFetch = articles
 	return nil
@@ -251,7 +127,7 @@ func (a *app) articles() ([]*article, error) {
 			}
 		}
 	}
-	sort.Sort(byDate(filtered))
+	sort.Sort(sort.Reverse(byDate(filtered)))
 	return filtered, nil
 }
 

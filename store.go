@@ -57,7 +57,7 @@ func newLinkStore(dbpath string) (*linkStore, error) {
 
 func (s *linkStore) findArticle(url string) (*articleState, error) {
 	var article articleState
-	err := s.db.SelectOne(&article, `SELECT * FROM articles WHERE url=?`, url)
+	err := s.db.SelectOne(&article, `SELECT * FROM articles WHERE url=? LIMIT 1`, url)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *linkStore) markArticleDismissed(url string) error {
 
 func (s *linkStore) findLink(url string) (*linkState, error) {
 	var link linkState
-	err := s.db.SelectOne(&link, `SELECT * FROM links WHERE url=?`, url)
+	err := s.db.SelectOne(&link, `SELECT * FROM links WHERE url=? LIMIT 1`, url)
 	if err != nil {
 		return nil, err
 	}
