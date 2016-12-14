@@ -16,8 +16,8 @@ import (
 
 	"github.com/alexflint/bufferlinks/buffer"
 	arg "github.com/alexflint/go-arg"
+	"github.com/codegangsta/negroni"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/urfave/negroni"
 )
 
 const accessToken = "1/9a1c6e4de8e136b3c04c941233350e88"
@@ -271,5 +271,8 @@ func main() {
 	middleware.UseHandler(http.DefaultServeMux)
 
 	log.Println("listening on", port)
-	http.ListenAndServe(port, middleware)
+	err = http.ListenAndServe(port, middleware)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
