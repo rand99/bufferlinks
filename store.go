@@ -1,17 +1,23 @@
 package main
 
 import (
-	"database/sql"
-	"log"
-	"os"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
-	gorp "gopkg.in/gorp.v1"
+	"github.com/boltdb/bolt"
 )
 
-type linkStore struct {
-	sqldb *sql.DB
-	db    *gorp.DbMap
+var (
+	linkBucket    = []byte("links")
+	articleBucket = []byte("articles")
+)
+
+var errNotFound = errors.New("not found")
+
+type store struct {
+	db *bolt.DB
 }
 
 type articleState struct {
@@ -27,63 +33,91 @@ type linkState struct {
 	QueuedAt   time.Time
 }
 
-func newLinkStore(dbpath string) (*linkStore, error) {
-	db, err := sql.Open("sqlite3", dbpath)
+func newStore(path string) (*store, error) {
+	db, err := bolt.Open(path, 0600, &bolt.Options{
+		Timeout: 1 * time.Second,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// construct a gorp DbMap
-	dbmap := &gorp.DbMap{Db: db, Dialect: gorp.SqliteDialect{}}
-	dbmap.TraceOn("[gorp]", log.New(os.Stdout, "[bufferlinks]", 0))
+	// create initial buckets
+	err = db.Update(func(tx *bolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(linkBucket)
+		if err != nil {
+			return fmt.Errorf("error creating bucket: %v", err)
+		}
 
-	// add a table, setting the table name to 'posts' and
-	// specifying that the Id property is an auto incrementing PK
-	dbmap.AddTableWithName(articleState{}, "articles").SetKeys(true, "ID")
-	dbmap.AddTableWithName(linkState{}, "links").SetKeys(true, "ID")
-
-	// create the table. in a production system you'd generally
-	// use a migration tool, or create the tables via scripts
-	err = dbmap.CreateTablesIfNotExists()
+		_, err = tx.CreateBucketIfNotExists(articleBucket)
+		if err != nil {
+			return fmt.Errorf("error creating bucket: %v", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	return &linkStore{
-		sqldb: db,
-		db:    dbmap,
-	}, nil
+	return &store{db: db}, nil
 }
 
-func (s *linkStore) findArticle(url string) (*articleState, error) {
+func (s *store) findArticle(url string) (*articleState, error) {
 	var article articleState
-	err := s.db.SelectOne(&article, `SELECT * FROM articles WHERE url=? LIMIT 1`, url)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(articleBucket)
+		buf := bucket.Get([]byte(url))
+		if buf == nil {
+			return errNotFound
+		}
+		return json.Unmarshal(buf, &article)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &article, nil
 }
 
-func (s *linkStore) markArticleDismissed(url string) error {
-	return s.db.Insert(&articleState{
+func (s *store) markArticleDismissed(url string) error {
+	buf, err := json.Marshal(articleState{
 		URL:         url,
 		DismissedAt: time.Now(),
 	})
+	if err != nil {
+		return err
+	}
+
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(articleBucket)
+		return bucket.Put([]byte(url), buf)
+	})
 }
 
-func (s *linkStore) findLink(url string) (*linkState, error) {
+func (s *store) findLink(url string) (*linkState, error) {
 	var link linkState
-	err := s.db.SelectOne(&link, `SELECT * FROM links WHERE url=? LIMIT 1`, url)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(linkBucket)
+		buf := bucket.Get([]byte(url))
+		if buf == nil {
+			return errNotFound
+		}
+		return json.Unmarshal(buf, &link)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return &link, nil
 }
 
-func (s *linkStore) markLinkQueued(url string) error {
-	log.Println("inserting:", url)
-	return s.db.Insert(&linkState{
+func (s *store) markLinkQueued(url string) error {
+	buf, err := json.Marshal(linkState{
 		URL:      url,
 		QueuedAt: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(linkBucket)
+		return bucket.Put([]byte(url), buf)
 	})
 }

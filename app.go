@@ -18,7 +18,6 @@ import (
 	arg "github.com/alexflint/go-arg"
 	"github.com/codegangsta/negroni"
 	assetfs "github.com/elazarl/go-bindata-assetfs"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 const accessToken = "1/9a1c6e4de8e136b3c04c941233350e88"
@@ -46,7 +45,7 @@ func mustParseTemplate(path string, filesystem bool) *template.Template {
 }
 
 type app struct {
-	store        *linkStore
+	store        *store
 	lastFetch    []*article
 	bufferClient *buffer.Client
 	debug        bool
@@ -227,7 +226,7 @@ func main() {
 	}
 
 	// Open DB
-	store, err := newLinkStore(args.DB)
+	store, err := newStore(args.DB)
 	if err != nil {
 		log.Fatal(err)
 	}
