@@ -17,6 +17,7 @@ import (
 	"github.com/alexflint/bufferlinks/buffer"
 	arg "github.com/alexflint/go-arg"
 	"github.com/codegangsta/negroni"
+	assetfs "github.com/elazarl/go-bindata-assetfs"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -261,8 +262,15 @@ func main() {
 		log.Printf("fetched %d articles", len(app.lastFetch))
 	}()
 
-	// TODO: use bindata
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	// Set up static assets
+	var static http.FileSystem
+	if args.Debug {
+		static = http.Dir("static")
+	} else {
+		static = &assetfs.AssetFS{Asset: Asset, AssetDir: AssetDir}
+	}
+
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(static)))
 	http.HandleFunc("/enqueue", app.handleEnqueue)
 	http.HandleFunc("/commit", app.handleCommit)
 	http.HandleFunc("/", app.handleIndex)
